@@ -8,7 +8,7 @@ display_usage() {
     echo "  --cleanup:              Cleans up previous modifications made by the script."
     echo "  <commit-or-tag>:        Sets up or updates the KernelSU to specified tag or commit."
     echo "  -h, --help:             Displays this usage information."
-    echo "  (no args):              Sets up or updates the KernelSU environment to the latest tagged version."
+    echo "  (no args):              Uses the preserved sagit driver snapshot."
 }
 
 initialize_variables() {
@@ -23,6 +23,10 @@ initialize_variables() {
 
     DRIVER_MAKEFILE=$DRIVER_DIR/Makefile
     DRIVER_KCONFIG=$DRIVER_DIR/Kconfig
+    if [ -d "$DRIVER_DIR/kernelsu" ] && [ ! -L "$DRIVER_DIR/kernelsu" ]; then
+        echo 'KernelSU is already vendored here; use the normal kernel build.' >&2
+        exit 1
+    fi
 }
 
 # Reverts modifications made by this script
@@ -39,18 +43,21 @@ perform_cleanup() {
 # Sets up or update KernelSU environment
 setup_kernelsu() {
     echo "[+] Setting up KernelSU..."
-    test -d "$GKI_ROOT/KernelSU" || git clone https://github.com/backslashxx/KernelSU && echo "[+] Repository cloned."
+    mirror=https://github.com/W-874/KernelSU-backslashxx.git
+    revision=${1:-527c5665dc146016f80d834ca8543e63b97ad490}
+    if [ ! -d "$GKI_ROOT/KernelSU" ]; then
+        git clone "$mirror" "$GKI_ROOT/KernelSU"
+    fi
     cd "$GKI_ROOT/KernelSU"
-    git stash && echo "[-] Stashed current changes."
-    if [ "$(git status | grep -Po 'v\d+(\.\d+)*' | head -n1)" ]; then
-        git checkout main && echo "[-] Switched to main branch."
+    if [ -n "$(git status --porcelain)" ]; then
+        echo 'Refusing to change a modified KernelSU checkout.' >&2
+        exit 1
     fi
-    git pull && echo "[+] Repository updated."
-    if [ -z "${1-}" ]; then
-        git checkout "$(git describe --abbrev=0 --tags)" && echo "[-] Checked out latest tag."
-    else
-        git checkout "$1" && echo "[-] Checked out $1." || echo "[-] Checkout default branch"
+    if ! git rev-parse --verify --quiet "$revision^{commit}" >/dev/null; then
+        git fetch --no-tags "$mirror" "$revision"
+        revision=FETCH_HEAD
     fi
+    git checkout --detach "$revision"
     cd "$DRIVER_DIR"
     ln -sf "$(realpath --relative-to="$DRIVER_DIR" "$GKI_ROOT/KernelSU/kernel")" "kernelsu" && echo "[+] Symlink created."
 
